@@ -15,6 +15,25 @@ and version before asking Android to install it.
 
 Android still requires the user to approve installation. It is not a silent installer.
 
+## Developer release publishing
+
+The private source repository contains a one-command Windows PowerShell publisher:
+`tools/Publish-HouseholdBillsRelease.ps1`.
+
+It fetches a successful GitHub Actions APK, signs it with the existing developer
+signing key **locally on the PC**, validates the signer and application version,
+uploads only the signed APK, verifies its public download checksum, and updates the
+manifest **last**. The signing key never leaves the developer computer.
+
+The publishing PC needs an authenticated GitHub CLI session to access the private
+source/build artifacts and publish to this public distribution repository.
+**Installed Android users do not need a GitHub account.**
+
+The public `.github/workflows/validate-update.yml` independently checks the
+published APK's SHA-256, package name, version and signing certificate after
+manifest changes. A CI check is not a substitute for downloading and verifying
+on an Android device.
+
 ## Publishing requirements
 
 Only publish an APK once its build/tests have passed and it has been signed with the
