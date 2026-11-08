@@ -1,0 +1,78 @@
+name: Validate public Android update
+on:
+  push:
+    branches: [main]
+    paths: [update.json, ".github/workflows/validate-update.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify-public-update:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out public release metadata
+        uses: actions/checkout@v4
+
+      - name: Validate metadata and fixed GitHub download location
+        id: metadata
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json, os, re
+          from urllib.parse import urlsplit
+          with open("update.json", encoding="utf-8") as f:
+              item = json.load(f)
+          code = item["versionCode"]
+          name = item["versionName"]
+          url = item["apkUrl"]
+          digest = item["sha256"]
+          if not isinstance(code, int) or isinstance(code, bool) or code < 1:
+              raise ValueError("Invalid versionCode")
+          if not isinstance(name, str) or not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", name):
+              raise ValueError("Invalid versionName")
+          if not isinstance(digest, str) or not re.fullmatch(r"[a-f0-9]{64}", digest):
+              raise ValueError("Invalid SHA-256")
+          expected_path = f"/ThePotato6801/HouseholdBillsWidget-Releases/releases/download/v{name}/HouseholdBills-v{name}.apk"
+          parts = urlsplit(url)
+          if parts.scheme != "https" or parts.netloc != "github.com" or parts.path != expected_path or parts.query or parts.fragment:
+              raise ValueError("Unexpected APK hosting URL")
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as f:
+              print(f"url={url}", file=f)
+              print(f"sha256={digest}", file=f)
+              print(f"versionCode={code}", file=f)
+              print(f"versionName={name}", file=f)
+          print(f"Validated release metadata: v{name} ({code})")
+          PY
+
+      - name: Download exact public APK
+        shell: bash
+        env:
+          APK_URL: ${{ steps.metadata.outputs.url }}
+        run: curl --fail --location --show-error --silent --retry 3 --max-time 120 "$APK_URL" --output published.apk
+
+      - name: Validate APK hash, Android package, version, and signing key
+        shell: bash
+        env:
+          EXPECTED_SHA: ${{ steps.metadata.outputs.sha256 }}
+          EXPECTED_CODE: ${{ steps.metadata.outputs.versionCode }}
+          EXPECTED_NAME: ${{ steps.metadata.outputs.versionName }}
+          EXPECTED_CERT: 0027ab269e685237cd9c0fe58549eb74065a6105d36dec6e8131d8730547f89f
+        run: |
+          set -euo pipefail
+          ACTUAL_SHA="$(sha256sum published.apk | cut -d ' ' -f 1)"
+          [ "$ACTUAL_SHA" = "$EXPECTED_SHA" ] || { echo "::error::Published APK checksum differs from update.json"; exit 1; }
+          SDK_ROOT="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          AAPT="$(find "$SDK_ROOT/build-tools" -type f -name aapt | sort -V | tail -n 1)"
+          SIGNER="$(find "$SDK_ROOT/build-tools" -type f -name apksigner | sort -V | tail -n 1)"
+          [ -n "$AAPT" ] && [ -n "$SIGNER" ] || { echo "::error::Android build tools unavailable"; exit 1; }
+          PACKAGE_LINE="$("$AAPT" dump badging published.apk | grep '^package: ' | head -n 1)"
+          echo "$PACKAGE_LINE"
+          echo "$PACKAGE_LINE" | grep -F "name='com.household.billwidget'" >/dev/null
+          echo "$PACKAGE_LINE" | grep -F "versionCode='$EXPECTED_CODE'" >/dev/null
+          echo "$PACKAGE_LINE" | grep -F "versionName='$EXPECTED_NAME'" >/dev/null
+          "$SIGNER" verify --verbose --print-certs published.apk | tee apk-signature.txt
+          ACTUAL_CERT="$(grep 'Signer #1 certificate SHA-256 digest:' apk-signature.txt | awk '{print $NF}')"
+          [ "$ACTUAL_CERT" = "$EXPECTED_CERT" ] || { echo "::error::APK signing certificate does not match installed app"; exit 1; }
+          echo "Public APK checksum, signature and version verified."
