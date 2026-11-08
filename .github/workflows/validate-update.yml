@@ -52,6 +52,21 @@ jobs:
           APK_URL: ${{ steps.metadata.outputs.url }}
         run: curl --fail --location --show-error --silent --retry 3 --max-time 120 "$APK_URL" --output published.apk
 
+      - name: Set up JDK 17 for Android build tools
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Ensure Android SDK build-tools 35 are installed
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDK_ROOT="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          SDKMANAGER="$(find "$SDK_ROOT/cmdline-tools" -type f -name sdkmanager -print -quit 2>/dev/null || true)"
+          if [[ -z "$SDKMANAGER" ]]; then echo "::error::Android sdkmanager unavailable"; exit 1; fi
+          "$SDKMANAGER" --install "build-tools;35.0.0"
+
       - name: Validate APK hash, Android package, version, and signing key
         shell: bash
         env:
