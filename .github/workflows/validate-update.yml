@@ -88,6 +88,7 @@ jobs:
           echo "$PACKAGE_LINE" | grep -F "versionCode='$EXPECTED_CODE'" >/dev/null
           echo "$PACKAGE_LINE" | grep -F "versionName='$EXPECTED_NAME'" >/dev/null
           "$SIGNER" verify --verbose --print-certs published.apk | tee apk-signature.txt
-          ACTUAL_CERT="$(grep 'Signer #1 certificate SHA-256 digest:' apk-signature.txt | awk '{print $NF}')"
+          ACTUAL_CERT="$(awk '/Signer(:| #[0-9]+) certificate SHA-256 digest:/ { print $NF; exit }' apk-signature.txt)"
+          [ -n "$ACTUAL_CERT" ] || { echo "::error::Cannot read APK certificate digest"; exit 1; }
           [ "$ACTUAL_CERT" = "$EXPECTED_CERT" ] || { echo "::error::APK signing certificate does not match installed app"; exit 1; }
           echo "Public APK checksum, signature and version verified."
